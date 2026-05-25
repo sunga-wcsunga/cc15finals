@@ -347,19 +347,38 @@ class PatientDialog(QDialog):
        self.dental_history_edit.setPlainText(dental_hist or "")
        self.diagnosis_edit.setPlainText(diagnosis or "")
        if last_visit:
-           self.last_visit_edit.setDate(QDate.fromString(last_visit, "yyyy-MM-dd"))
+           self.last_visit_edit.setDate(
+               QDate(
+                   last_visit.year,
+                   last_visit.month,
+                   last_visit.day
+               )
+           )
+
        if next_appt:
-           self.next_appt_edit.setDate(QDate.fromString(next_appt, "yyyy-MM-dd"))
+           self.next_appt_edit.setDate(
+               QDate(
+                   next_appt.year,
+                   next_appt.month,
+                   next_appt.day
+               )
+           )
        idx = self.status_combo.findText(status or "Active")
        if idx >= 0:
            self.status_combo.setCurrentIndex(idx)
 
-
    def _save(self):
+
        full_name = self.full_name_edit.text().strip()
+
        if not full_name:
-           QMessageBox.warning(self, "Missing Info", "Please enter the patient's full name.")
+           QMessageBox.warning(
+               self,
+               "Missing Info",
+               "Please enter the patient's full name."
+           )
            return
+
        data = (
            full_name,
            self.age_spin.value(),
@@ -372,25 +391,66 @@ class PatientDialog(QDialog):
            self.next_appt_edit.date().toString("yyyy-MM-dd"),
            self.status_combo.currentText(),
        )
-       conn = get_connection()
-       c = conn.cursor()
-       if self.patient_id:
-           c.execute("""
-               UPDATE patients SET full_name=%s, age=%s, phone=%s, address=%s,
-                   medical_history=%s, dental_history=%s, diagnosis=%s,
-                   last_visit=%s, next_appt=%s, status=%s
-               WHERE patient_id=%s
-           """, data + (self.patient_id,))
-       else:
-           c.execute("""
-               INSERT INTO patients
-                   (full_name, age, phone, address, medical_history,
-                    dental_history, diagnosis, last_visit, next_appt, status)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
-           """, data)
-       conn.commit()
-       conn.close()
-       self.accept()
+
+       try:
+
+           conn = get_connection()
+           c = conn.cursor()
+
+           if self.patient_id:
+
+               c.execute("""
+                   UPDATE patients SET
+                       full_name=%s,
+                       age=%s,
+                       phone=%s,
+                       address=%s,
+                       medical_history=%s,
+                       dental_history=%s,
+                       diagnosis=%s,
+                       last_visit=%s,
+                       next_appt=%s,
+                       status=%s
+                   WHERE patient_id=%s
+               """, data + (self.patient_id,))
+
+           else:
+
+               c.execute("""
+                   INSERT INTO patients
+                       (
+                           full_name,
+                           age,
+                           phone,
+                           address,
+                           medical_history,
+                           dental_history,
+                           diagnosis,
+                           last_visit,
+                           next_appt,
+                           status
+                       )
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               """, data)
+
+           conn.commit()
+           conn.close()
+
+           QMessageBox.information(
+               self,
+               "Saved",
+               "Database save successful."
+           )
+
+           super().accept()
+
+       except Exception as e:
+
+           QMessageBox.critical(
+               self,
+               "Database Error",
+               str(e)
+           )
 
 
 class LoginDialog(QDialog):
@@ -442,7 +502,7 @@ class LoginDialog(QDialog):
         user = login_user(username, password)
 
         if user:
-            self.accept()
+            super().accept()
         else:
             QMessageBox.critical(
                 self,
@@ -520,7 +580,7 @@ class RegisterDialog(QDialog):
                 "Account created successfully."
             )
 
-            self.accept()
+            super().accept()
 
         except Exception as e:
             QMessageBox.critical(
@@ -791,6 +851,7 @@ class MainWindow(QMainWindow):
        QMessageBox.information(self, "Success", "Appointment added successfully!")
 
    def _delete_appointment(self):
+
        idx = self.apt_table.currentIndex()
 
        if not idx.isValid():
@@ -802,16 +863,25 @@ class MainWindow(QMainWindow):
            return
 
        src_idx = self.apt_proxy.mapToSource(idx)
+
+       if src_idx.row() < 0:
+           return
+
        appt_id = self.apt_model._data[src_idx.row()][0]
 
        reply = QMessageBox.question(
            self,
            "Confirm Delete",
            "Are you sure you want to delete this appointment?",
-           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+           QMessageBox.StandardButton.Yes |
+           QMessageBox.StandardButton.No
        )
 
-       if reply == QMessageBox.StandardButton.Yes:
+       if reply != QMessageBox.StandardButton.Yes:
+           return
+
+       try:
+
            conn = get_connection()
            c = conn.cursor()
 
@@ -823,8 +893,25 @@ class MainWindow(QMainWindow):
            conn.commit()
            conn.close()
 
+           self.apt_table.clearSelection()
+
            self.apt_model.refresh()
 
+           self.apt_table.setCurrentIndex(QModelIndex())
+
+           QMessageBox.information(
+               self,
+               "Deleted",
+               "Appointment deleted successfully."
+           )
+
+       except Exception as e:
+
+           QMessageBox.critical(
+               self,
+               "Delete Error",
+               str(e)
+           )
 
    # ── PATIENTS PAGE ────────────────────────
    def _build_patients_page(self):
@@ -950,25 +1037,46 @@ class MainWindow(QMainWindow):
            self._refresh_patients()
            QMessageBox.information(self, "Success", "Patient record updated successfully!")
 
-
    def _delete_patient(self):
+
        pid = self._get_selected_patient_id()
+
        if pid is None:
-           QMessageBox.warning(self, "No Selection", "Please select a patient to delete.")
+           QMessageBox.warning(
+               self,
+               "No Selection",
+               "Please select a patient to delete."
+           )
            return
+
        conn = get_connection()
        c = conn.cursor()
-       c.execute("SELECT full_name FROM patients WHERE patient_id=%s", (pid,))
+
+       c.execute(
+           "SELECT full_name FROM patients WHERE patient_id=%s",
+           (pid,)
+       )
+
        row = c.fetchone()
+
        conn.close()
+
        name = row[0] if row else "this patient"
+
        reply = QMessageBox.question(
-           self, "Confirm Delete",
+           self,
+           "Confirm Delete",
            f"Are you sure you want to permanently delete the record for {name}?\n\nThis action cannot be undone.",
-           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+           QMessageBox.StandardButton.Yes |
+           QMessageBox.StandardButton.No,
            QMessageBox.StandardButton.No
        )
-       if reply == QMessageBox.StandardButton.Yes:
+
+       if reply != QMessageBox.StandardButton.Yes:
+           return
+
+       try:
+
            conn = get_connection()
            c = conn.cursor()
 
@@ -980,12 +1088,28 @@ class MainWindow(QMainWindow):
            conn.commit()
            conn.close()
 
-           self._refresh_patients()
+           self.patient_table.clearSelection()
+
+           self.patient_model.refresh()
+
+           self.patient_table.setCurrentIndex(QModelIndex())
+
+           QApplication.processEvents()
+
+           self._update_stats()
 
            QMessageBox.information(
                self,
                "Deleted",
                f"Record for {name} has been deleted."
+           )
+
+       except Exception as e:
+
+           QMessageBox.critical(
+               self,
+               "Delete Error",
+               str(e)
            )
 
 
@@ -1062,15 +1186,31 @@ class MainWindow(QMainWindow):
        layout.addLayout(btn_row)
        dlg.exec()
 
-
    def _logout(self):
+
        reply = QMessageBox.question(
-           self, "Log Out", "Are you sure you want to log out?",
-           QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+           self,
+           "Log Out",
+           "Are you sure you want to log out?",
+           QMessageBox.StandardButton.Yes |
+           QMessageBox.StandardButton.No,
            QMessageBox.StandardButton.No
        )
+
        if reply == QMessageBox.StandardButton.Yes:
-           QApplication.quit()
+
+           self.close()
+
+           login = LoginDialog()
+
+           if login.exec() == QDialog.DialogCode.Accepted:
+
+               self.__init__()
+               self.show()
+
+           else:
+
+               QApplication.quit()
 
 
 
@@ -1100,4 +1240,3 @@ if __name__ == "__main__":
         window = MainWindow()
         window.show()
         sys.exit(app.exec())
-
